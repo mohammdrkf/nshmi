@@ -204,11 +204,11 @@ def init_db():
     try:
         c.execute("ALTER TABLE menu_items ADD COLUMN description TEXT DEFAULT ''")
     except:
-        pass
+        if USE_PG: conn.rollback()
     try:
         c.execute("ALTER TABLE menu_items ADD COLUMN image_b64 TEXT DEFAULT ''")
     except:
-        pass
+        if USE_PG: conn.rollback()
 
     c.execute("SELECT COUNT(*) AS cnt FROM users")
     if c.fetchone()["cnt"] == 0:
@@ -236,7 +236,7 @@ def init_db():
         try:
             c.execute("INSERT INTO settings (key,value) VALUES (%s,%s)", (_k, _v))
         except Exception:
-            pass
+            if USE_PG: conn.rollback()
 
     conn.commit()
     conn.close()
