@@ -174,42 +174,27 @@ def init_db():
         )""",
     ]
 
-    # Safe column migrations for existing DBs — add any missing columns
-    migrations = [
+    # ── STEP 1: Create all tables and commit immediately ──────────────
+    # Must commit DDL before any migrations — a rollback() after a
+    # failed ALTER TABLE would also undo uncommitted CREATE TABLEs.
+    for stmt in ddl:
+        c.execute(stmt)
+    conn.commit()
+
+    # ── STEP 2: Safe column migrations (each committed individually) ──
+    all_migrations = [
         ("table_num",   "orders",     "TEXT DEFAULT ''"),
         ("image_b64",   "menu_items", "TEXT DEFAULT ''"),
         ("description", "menu_items", "TEXT DEFAULT ''"),
     ]
-    for _col, _tbl, _def in migrations:
+    for _col, _tbl, _def in all_migrations:
         try:
             c.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_def}")
             conn.commit()
         except Exception:
-            conn.rollback() if USE_PG else None
-    
-    # Make sure settings rows exist (idempotent)
-    for _k, _v in [("water_price","0.250"),("shisha_price","5.000"),("shisha_label","أرجيلة"),
-                   ("carwash_price","3.000"),("carwash_label","غسيل سيارة"),("phone","")]:
-        try:
-            if USE_PG:
-                c.execute("INSERT INTO settings(key,value) VALUES(%s,%s) ON CONFLICT(key) DO NOTHING", (_k,_v))
-            else:
-                c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(%s,%s)", (_k,_v))
-        except Exception:
-            pass
+            if USE_PG: conn.rollback()
 
-    for stmt in ddl:
-        c.execute(stmt)
-
-    try:
-        c.execute("ALTER TABLE menu_items ADD COLUMN description TEXT DEFAULT ''")
-    except:
-        if USE_PG: conn.rollback()
-    try:
-        c.execute("ALTER TABLE menu_items ADD COLUMN image_b64 TEXT DEFAULT ''")
-    except:
-        if USE_PG: conn.rollback()
-
+    # ── STEP 3: Seed default users if table is empty ──────────────────
     c.execute("SELECT COUNT(*) AS cnt FROM users")
     if c.fetchone()["cnt"] == 0:
         for name, role, pin in [
@@ -222,8 +207,9 @@ def init_db():
                 "INSERT INTO users (name, role, pin) VALUES (%s,%s,%s)",
                 (name, role, pin)
             )
+        conn.commit()
 
-    # Seed default settings
+    # ── STEP 4: Seed default settings (idempotent) ───────────────────
     default_settings = [
         ("water_price",   "0.250"),
         ("shisha_price",  "5.000"),
@@ -234,11 +220,14 @@ def init_db():
     ]
     for _k, _v in default_settings:
         try:
-            c.execute("INSERT INTO settings (key,value) VALUES (%s,%s)", (_k, _v))
+            if USE_PG:
+                c.execute("INSERT INTO settings(key,value) VALUES(%s,%s) ON CONFLICT(key) DO NOTHING", (_k, _v))
+            else:
+                c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(%s,%s)", (_k, _v))
         except Exception:
             if USE_PG: conn.rollback()
-
     conn.commit()
+
     conn.close()
 
 
